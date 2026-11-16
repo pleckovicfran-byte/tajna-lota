@@ -1,0 +1,329 @@
+
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TAJNA LOTA X</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#080808;color:#eee;font-family:Arial,sans-serif}
+header{text-align:center;padding:28px;border-bottom:1px solid #9c792b}
+.logo{font-size:30px;font-weight:900;color:#d8b45a;letter-spacing:3px}
+.tag{font-size:11px;letter-spacing:3px;color:#aaa;margin-top:8px}
+main{max-width:950px;margin:30px auto;padding:15px}
+.panel{background:#141414;border:1px solid #393020;border-radius:12px;padding:22px;margin-bottom:20px}
+h2{color:#d8b45a;margin-top:0}
+input,select{width:100%;padding:13px;margin:7px 0;background:#090909;color:white;border:1px solid #554522;border-radius:6px}
+button{background:#c49b42;color:#080808;border:0;padding:13px 18px;border-radius:6px;font-weight:bold;cursor:pointer;margin:5px 0}
+button:hover{background:#e4c36c}
+.secondary{background:#333;color:white}
+.hidden{display:none!important}
+.balance{font-size:32px;color:#e4c36c;font-weight:bold}
+small{color:#aaa}
+.item{padding:12px;border-bottom:1px solid #333;overflow-wrap:anywhere}
+#message{color:#e4c36c;margin:12px 0}
+.numbers{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;margin:15px 0}
+.num{padding:10px 0;background:#252525;color:white;border:1px solid #51452b;border-radius:50%;text-align:center;cursor:pointer}
+.num.selected{background:#d1aa50;color:#000}
+@media(max-width:500px){.logo{font-size:23px}.panel{padding:15px}.numbers{gap:3px}.num{padding:8px 0;font-size:12px}}
+</style>
+</head>
+<body>
+
+<header>
+<div class="logo">TAJNA LOTA X</div>
+<div class="tag">THE ODDS NOBODY ELSE HAS.</div>
+</header>
+
+<main>
+<div id="message"></div>
+
+<section id="login" class="panel">
+<h2>Prijava</h2>
+<input id="username" placeholder="Korisničko ime" autocomplete="username">
+<input id="password" type="password" placeholder="Lozinka" autocomplete="current-password">
+<button onclick="login()">PRIJAVI SE</button>
+</section>
+
+<section id="dashboard" class="hidden">
+<div class="panel">
+<h2>Dobrodošli, <span id="displayName"></span></h2>
+<small>VIRTUALNI SALDO</small>
+<div class="balance" id="balance">€0.00</div>
+<button class="secondary" onclick="logout()">ODJAVA</button>
+</div>
+
+<div id="adminPanel" class="hidden">
+<div class="panel">
+<h2>Izrada korisničkog računa</h2>
+<input id="newUsername" placeholder="Novo korisničko ime">
+<input id="newPassword" type="password" placeholder="Lozinka">
+<button onclick="createUser()">IZRADI RAČUN</button>
+</div>
+
+<div class="panel">
+<h2>Korisnici</h2>
+<div id="users"></div>
+</div>
+
+<div class="panel">
+<h2>QUICK KENO – novi listić</h2>
+<select id="ticketUser"></select>
+<p>Odaberi brojeve od 1 do 80:</p>
+<div class="numbers" id="numbers"></div>
+<p>Odabrano: <span id="selectedCount">0</span></p>
+<input id="stake" type="number" min="0.01" step="0.01" placeholder="Ulog (€)">
+<button onclick="createTicket()">KREIRAJ LISTIĆ</button>
+</div>
+
+<div class="panel">
+<h2>Listići za obradu</h2>
+<div id="tickets"></div>
+</div>
+</div>
+
+<div id="userPanel" class="hidden">
+<div class="panel">
+<h2>Moji QUICK KENO listići</h2>
+<div id="myTickets">Prikaz listića još nije povezan.</div>
+</div>
+</div>
+</section>
+</main>
+
+<script>
+const SUPABASE_URL = "https://bgdpbdnnjwkjhwdtnrqx.supabase.co";
+const SUPABASE_KEY = "sb_publishable_OgKNu7_8AXMb3i7RurrIBA_TLVfALVN";
+
+const db = window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+
+let currentProfile = null;
+let selectedNumbers = [];
+let usersCache = [];
+
+function message(text){
+  document.getElementById("message").textContent = text;
+}
+
+async function api(action,data={}){
+  const {data:result,error} = await db.functions.invoke("tajna-lota-api",{
+    body:{action,...data}
+  });
+  if(error) throw new Error(error.message);
+  if(result?.error) throw new Error(result.error);
+  return result;
+}
+
+async function login(){
+  try{
+    const username=document.getElementById("username").value.trim();
+    const password=document.getElementById("password").value;
+
+    if(!username||!password) throw new Error("Unesi korisničko ime i lozinku.");
+
+    const email=username.toLowerCase()+"@tajnalotax.local";
+    const {error}=await db.auth.signInWithPassword({email,password});
+    if(error) throw error;
+
+    const result=await api("me");
+    currentProfile=result.profile;
+    await showDashboard();
+    message("Uspješna prijava!");
+  }catch(e){
+    message("Greška: "+e.message);
+  }
+}
+
+async function logout(){
+  await db.auth.signOut();
+  currentProfile=null;
+  document.getElementById("dashboard").classList.add("hidden");
+  document.getElementById("login").classList.remove("hidden");
+  message("Odjavljen si.");
+}
+
+async function showDashboard(){
+  document.getElementById("login").classList.add("hidden");
+  document.getElementById("dashboard").classList.remove("hidden");
+  document.getElementById("displayName").textContent=currentProfile.username;
+  document.getElementById("balance").textContent=
+    "€"+Number(currentProfile.balance).toFixed(2);
+
+  if(currentProfile.role==="admin"){
+    document.getElementById("adminPanel").classList.remove("hidden");
+    document.getElementById("userPanel").classList.add("hidden");
+    await loadUsers();
+    await loadTickets();
+  }else{
+    document.getElementById("userPanel").classList.remove("hidden");
+    document.getElementById("adminPanel").classList.add("hidden");
+    document.getElementById("myTickets").textContent=
+      "Prikaz korisničkih listića dovršit ćemo u sljedećem koraku.";
+  }
+}
+
+async function createUser(){
+  try{
+    const username=document.getElementById("newUsername").value.trim();
+    const password=document.getElementById("newPassword").value;
+
+    await api("create_user",{username,password});
+
+    message("Račun je uspješno izrađen!");
+    document.getElementById("newUsername").value="";
+    document.getElementById("newPassword").value="";
+    await loadUsers();
+  }catch(e){message("Greška: "+e.message);}
+}
+
+async function loadUsers(){
+  try{
+    const result=await api("list_users");
+    usersCache=result.users||[];
+
+    const users=document.getElementById("users");
+    const select=document.getElementById("ticketUser");
+    users.replaceChildren();
+    select.replaceChildren();
+
+    usersCache.forEach(u=>{
+      const item=document.createElement("div");
+      item.className="item";
+      item.textContent=u.username+" — €"+Number(u.balance).toFixed(2);
+      users.appendChild(item);
+
+      const option=document.createElement("option");
+      option.value=u.id;
+      option.textContent=u.username;
+      select.appendChild(option);
+    });
+  }catch(e){message("Greška: "+e.message);}
+}
+
+function drawNumbers(){
+  const container=document.getElementById("numbers");
+
+  for(let i=1;i<=80;i++){
+    const b=document.createElement("button");
+    b.className="num";
+    b.textContent=i;
+
+    b.onclick=()=>{
+      if(selectedNumbers.includes(i)){
+        selectedNumbers=selectedNumbers.filter(n=>n!==i);
+        b.classList.remove("selected");
+      }else{
+        selectedNumbers.push(i);
+        b.classList.add("selected");
+      }
+      document.getElementById("selectedCount").textContent=selectedNumbers.length;
+    };
+
+    container.appendChild(b);
+  }
+}
+
+async function createTicket(){
+  try{
+    const user_id=document.getElementById("ticketUser").value;
+    const stake=Number(document.getElementById("stake").value);
+
+    if(!user_id) throw new Error("Odaberi korisnika.");
+    if(!selectedNumbers.length) throw new Error("Odaberi barem jedan broj.");
+    if(!Number.isFinite(stake)||stake<=0) throw new Error("Neispravan ulog.");
+
+    await api("create_ticket",{user_id,numbers:selectedNumbers,stake});
+
+    message("Listić je kreiran!");
+    selectedNumbers=[];
+    document.querySelectorAll(".num").forEach(b=>b.classList.remove("selected"));
+    document.getElementById("selectedCount").textContent="0";
+    document.getElementById("stake").value="";
+
+    await loadUsers();
+    await loadTickets();
+  }catch(e){message("Greška: "+e.message);}
+}
+
+async function loadTickets(){
+  try{
+    const result=await api("list_tickets");
+    const container=document.getElementById("tickets");
+    container.replaceChildren();
+
+    const pending=(result.tickets||[]).filter(t=>t.status==="PENDING");
+
+    if(!pending.length){
+      container.textContent="Nema listića za obradu.";
+      return;
+    }
+
+    pending.forEach(t=>{
+      const div=document.createElement("div");
+      div.className="item";
+
+      const user=usersCache.find(u=>u.id===t.user_id);
+      const title=document.createElement("p");
+      title.textContent=(user?.username||"Korisnik")+
+        " | Brojevi: "+t.numbers.join(", ")+
+        " | Ulog: €"+Number(t.stake).toFixed(2);
+
+      const hits=document.createElement("input");
+      hits.placeholder="Pogoci, odvojeni zarezom";
+
+      const odds=document.createElement("input");
+      odds.type="number";
+      odds.step="0.01";
+      odds.placeholder="Koeficijent";
+
+      const win=document.createElement("button");
+      win.textContent="DOBITAK";
+      win.onclick=()=>processTicket(t.id,"WON",hits.value,odds.value);
+
+      const lose=document.createElement("button");
+      lose.textContent="GUBITAK";
+      lose.className="secondary";
+      lose.onclick=()=>processTicket(t.id,"LOST",hits.value,0);
+
+      div.append(title,hits,odds,win,lose);
+      container.appendChild(div);
+    });
+  }catch(e){message("Greška: "+e.message);}
+}
+
+async function processTicket(id,status,hitsText,oddsText){
+  try{
+    const hits=hitsText.trim()
+      ?hitsText.split(",").map(x=>Number(x.trim())):[];
+    await api("process_ticket",{
+      ticket_id:id,
+      status,
+      hits,
+      odds:Number(oddsText)
+    });
+
+    message("Listić obrađen.");
+    await loadTickets();
+    await loadUsers();
+  }catch(e){message("Greška: "+e.message);}
+}
+
+drawNumbers();
+
+db.auth.getSession().then(async({data})=>{
+  if(data.session){
+    try{
+      const result=await api("me");
+      currentProfile=result.profile;
+      await showDashboard();
+    }catch(e){
+      await db.auth.signOut();
+      message("Prijava je istekla. Prijavi se ponovno.");
+    }
+  }
+});
+</script>
+</body>
+</html>
